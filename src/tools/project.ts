@@ -13,20 +13,32 @@ function createBasicProject(dir: string, packageName: string, appName: string, m
   const resDir = join(srcDir, "res");
   const layoutDir = join(resDir, "layout");
   const valuesDir = join(resDir, "values");
-  const mipmapDir = join(resDir, "mipmap-hdpi");
-
   mkdirSync(javaDir, { recursive: true });
   mkdirSync(layoutDir, { recursive: true });
   mkdirSync(valuesDir, { recursive: true });
-  mkdirSync(mipmapDir, { recursive: true });
 
-  writeFileSync(join(dir, "settings.gradle.kts"), `rootProject.name = "${appName.replace(/\s+/g, "-")}"
+  writeFileSync(join(dir, "settings.gradle.kts"), `pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "${appName.replace(/\s+/g, "-")}"
 include(":app")
 `);
 
   writeFileSync(join(dir, "build.gradle.kts"), `plugins {
-    id("com.android.application") version "8.2.0" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+    id("com.android.application") version "8.5.2" apply false
 }
 `);
 
@@ -40,7 +52,6 @@ include(":app")
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
         android:label="${appName}"
         android:supportsRtl="true"
         android:theme="@style/Theme.${appName.replace(/\s+/g, "")}">
@@ -127,7 +138,8 @@ android.useAndroidX=true
 android.enableJetifier=true
 `);
 
-  writeFileSync(join(dir, "local.properties"), "sdk.dir=${ANDROID_HOME}\n");
+  const sdkPath = process.env.ANDROID_HOME || join(process.env.HOME || "", "android-sdk");
+  writeFileSync(join(dir, "local.properties"), `sdk.dir=${sdkPath}\n`);
 
   // Create gradle wrapper
   const gradlewPath = join(dir, "gradlew");
@@ -159,7 +171,6 @@ exec "\$GRADLE_HOME/bin/gradle" "\$@"
 
   const appBuildGradle = `plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android") version "1.9.20"
 }
 
 android {
@@ -183,9 +194,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
 }
 

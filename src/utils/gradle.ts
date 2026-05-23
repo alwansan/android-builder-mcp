@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { detectJavaHome } from "./sdk.js";
 
 export interface BuildResult {
   success: boolean;
@@ -27,6 +28,41 @@ function findGradleCommand(projectDir: string): string {
   return "gradle";
 }
 
+export function ensureSdkComponents(): void {
+  const androidHome = process.env.ANDROID_HOME || join(process.env.HOME || "", "android-sdk");
+  const needed: string[] = [];
+
+  if (!existsSync(join(androidHome, "platforms", "android-36", "android.jar"))) {
+    needed.push("platforms;android-36");
+  }
+
+  if (needed.length === 0) return;
+
+  const sdkmanagerCandidates = [
+    "sdkmanager",
+    join(androidHome, "cmdline-tools", "latest", "bin", "sdkmanager"),
+    join(androidHome, "tools", "bin", "sdkmanager"),
+  ];
+  let sdkmanager: string | null = null;
+  for (const c of sdkmanagerCandidates) {
+    if (existsSync(c)) { sdkmanager = c; break; }
+    try {
+      const out = execSync(`which ${c} 2>/dev/null`, { encoding: "utf8" }).trim();
+      if (out) { sdkmanager = out; break; }
+    } catch {}
+  }
+
+  if (sdkmanager) {
+    for (const component of needed) {
+      try {
+        execSync(`yes | "${sdkmanager}" --sdk_root="${androidHome}" "${component}" 2>&1`, {
+          encoding: "utf8", timeout: 120000,
+        });
+      } catch {}
+    }
+  }
+}
+
 export function buildApk(
   projectDir: string,
   variant: string = "debug",
@@ -34,11 +70,24 @@ export function buildApk(
   extraArgs: string[] = []
 ): BuildResult {
   const startTime = Date.now();
+  const arch = execSync("uname -m", { encoding: "utf8" }).trim();
+  const isArm64 = arch === "aarch64" || arch === "arm64";
+
+  const hasBox64 = findBox64() !== null;
+
+  ensureSdkComponents();
+
+  if (isArm64) {
+    ensureGradleProperties();
+    patchAapt2InGradleCache();
+  }
+
   const gradleCmd = findGradleCommand(projectDir);
-  const javaHome = process.env.JAVA_HOME || "/usr/lib/jvm/java-17-openjdk-arm64";
+  const javaHome = process.env.JAVA_HOME || detectJavaHome() || execSync("dirname $(dirname $(readlink -f $(which java))) 2>/dev/null || echo ''", { encoding: "utf8" }).trim() || "/usr/lib/jvm/java-17-openjdk-arm64";
   const task = variant === "release" ? "assembleRelease" : "assembleDebug";
-  let cmd = `JAVA_HOME="${javaHome}" ANDROID_HOME="${process.env.ANDROID_HOME || join(process.env.HOME || "", "android-sdk")}" ${gradleCmd} ${task}`;
-  if (clean) cmd = `JAVA_HOME="${javaHome}" ANDROID_HOME="${process.env.ANDROID_HOME || ""}" ${gradleCmd} clean ${task}`;
+  const androidHome = process.env.ANDROID_HOME || join(process.env.HOME || "", "android-sdk");
+  let cmd = `JAVA_HOME="${javaHome}" ANDROID_HOME="${androidHome}" ${gradleCmd} ${task}`;
+  if (clean) cmd = `JAVA_HOME="${javaHome}" ANDROID_HOME="${androidHome}" ${gradleCmd} clean ${task}`;
   if (extraArgs.length > 0) cmd += ` ${extraArgs.join(" ")}`;
   cmd += " --no-daemon 2>&1";
   try {
@@ -51,8 +100,29 @@ export function buildApk(
     const duration = Date.now() - startTime;
     const output = e.stdout || e.stderr || e.message || "Build failed";
     const errors = extractErrors(output);
-    if (output.includes("aapt2") && output.includes("Exec format error")) {
-      errors.push("aapt2 issue: x86-64 aapt2 detected in Gradle cache. Run fix_aapt2 tool");
+
+    if (!errors.some(e => e.includes("AAPT2") || e.includes("aapt2"))) {
+      if (isArm64 && output.includes("aapt2") && (output.includes("Daemon startup failed") || output.includes("Exec format error"))) {
+        const patched = patchAapt2InGradleCache();
+        if (patched.length > 0) {
+          try {
+            const retryOutput = execSync(cmd, { cwd: projectDir, encoding: "utf8", timeout: 600000 });
+            const retryDuration = Date.now() - startTime;
+            const apkPaths = findBuiltApks(projectDir, variant);
+            return { success: apkPaths.length > 0, apkPath: apkPaths[0] || null, output: retryOutput, duration: retryDuration, errors: extractErrors(retryOutput) };
+          } catch (retryErr: any) {
+            const retryOutput = retryErr.stdout || retryErr.stderr || retryErr.message || "";
+            errors.push(...extractErrors(retryOutput));
+          }
+        }
+      }
+      if (output.includes("aapt2") && (output.includes("failed to load include path") || output.includes("Daemon startup failed"))) {
+        if (hasBox64) {
+          errors.push("aapt2 issue: Box64 wrapper may not be working. Ensure box64 is installed and the x86-64 aapt2 exists in build-tools. Run: apt-get install -y box64");
+        } else {
+          errors.push("aapt2 issue: arm64 aapt2 is incompatible with compileSdk >= 35. Install box64 for x86-64 translation: apt-get install -y box64");
+        }
+      }
     }
     return { success: false, apkPath: null, output, duration, errors };
   }
@@ -107,13 +177,129 @@ export function ensureGradleProperties(): void {
   if (existsSync(path)) {
     content = readFileSync(path, "utf8");
   }
-  if (!content.includes("android.aapt2FromMavenOverride")) {
-    const aapt = execSync("which aapt2 2>/dev/null || echo /usr/bin/aapt2", { encoding: "utf8" }).trim();
-    content += `\n# Force aapt2 path for arm64\nandroid.aapt2FromMavenOverride=${aapt}\n`;
-    writeFileSync(path, content);
-  }
   if (!content.includes("org.gradle.jvmargs")) {
     content += "\norg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m\n";
     writeFileSync(path, content);
   }
+}
+
+export function findBox64(): string | null {
+  try {
+    const out = execSync("box64 --version 2>/dev/null", { encoding: "utf8" }).trim();
+    if (out) return out;
+  } catch {}
+  try {
+    const p = execSync("which box64 2>/dev/null", { encoding: "utf8" }).trim();
+    if (p) return p;
+  } catch {}
+  return null;
+}
+
+export function findX64Aapt2(): string | null {
+  const androidHome = process.env.ANDROID_HOME || join(process.env.HOME || "", "android-sdk");
+  const btDir = join(androidHome, "build-tools");
+  if (!existsSync(btDir)) return null;
+  try {
+    const dirs = execSync(`ls "${btDir}" 2>/dev/null`, { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+    for (const dir of dirs) {
+      const p = join(btDir, dir, "aapt2");
+      if (existsSync(p)) {
+        try {
+          const info = execSync(`readelf -h "${p}" 2>/dev/null`, { encoding: "utf8" });
+          if (info.includes("X86-64") || info.includes("Advanced Micro Devices")) return p;
+        } catch {}
+        return p;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function findArm64Aapt2(): string | null {
+  const androidHome = process.env.ANDROID_HOME || join(process.env.HOME || "", "android-sdk");
+  const btDir = join(androidHome, "build-tools");
+  if (!existsSync(btDir)) return null;
+  try {
+    const dirs = execSync(`ls "${btDir}" 2>/dev/null`, { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+    for (const dir of dirs) {
+      const p = join(btDir, dir, "aapt2");
+      if (existsSync(p)) {
+        try {
+          const info = execSync(`readelf -h "${p}" 2>/dev/null`, { encoding: "utf8" });
+          if (info.includes("AArch64")) return p;
+        } catch {}
+        return p;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function updateJarBinary(jarPath: string, binaryPath: string): boolean {
+  const workDir = join("/tmp", "aapt2-patch-" + Date.now());
+  mkdirSync(workDir, { recursive: true });
+  try {
+    execSync(`cd "${workDir}" && unzip -qo "${jarPath}" 2>/dev/null`, { encoding: "utf8" });
+    const destPath = join(workDir, "aapt2");
+    if (!existsSync(destPath)) return false;
+    copyFileSync(binaryPath, destPath);
+    execSync(`cd "${workDir}" && jar uf "${jarPath}" aapt2 2>/dev/null || python3 -c "
+import zipfile
+with zipfile.ZipFile('${jarPath}', 'a') as z:
+    z.write('${workDir}/aapt2', 'aapt2')
+" 2>/dev/null || true`, { encoding: "utf8" });
+    return true;
+  } finally {
+    execSync(`rm -rf "${workDir}"`, { encoding: "utf8" });
+  }
+}
+
+function createBox64WrapperScript(): string | null {
+  const box64Path = execSync("which box64", { encoding: "utf8" }).trim();
+  const x64Aapt2 = findX64Aapt2();
+  if (!box64Path || !x64Aapt2) return null;
+  const wrapperPath = join("/tmp", "aapt2-box64-wrapper");
+  const content = `#!/bin/sh\nexec ${box64Path} ${x64Aapt2} "$@"\n`;
+  writeFileSync(wrapperPath, content);
+  execSync(`chmod +x "${wrapperPath}"`, { encoding: "utf8" });
+  return wrapperPath;
+}
+
+export function patchAapt2InGradleCache(): string[] {
+  const fixes: string[] = [];
+  const hasBox64 = findBox64() !== null;
+  let replacementPath: string | null = null;
+
+  if (hasBox64) {
+    replacementPath = createBox64WrapperScript();
+    if (!replacementPath) {
+      const armAapt = findArm64Aapt2();
+      if (armAapt) replacementPath = armAapt;
+    }
+  } else {
+    replacementPath = findArm64Aapt2();
+  }
+
+  if (!replacementPath) return fixes;
+
+  const gradleCache = join(process.env.HOME || "", ".gradle", "caches");
+  const termuxCache = "/data/data/com.termux/files/home/.gradle/caches";
+  const caches = [gradleCache];
+  if (existsSync(termuxCache)) caches.push(termuxCache);
+
+  for (const cache of caches) {
+    if (!existsSync(cache)) continue;
+    try {
+      const jars = execSync(
+        `find "${cache}" -name 'aapt2-*-linux.jar' -type f 2>/dev/null || true`,
+        { encoding: "utf8" }
+      ).trim().split("\n").filter(Boolean);
+      for (const jarPath of jars) {
+        if (updateJarBinary(jarPath, replacementPath)) {
+          fixes.push(`Patched: ${jarPath}${hasBox64 ? " (box64 wrapper)" : ""}`);
+        }
+      }
+    } catch {}
+  }
+  return fixes;
 }
