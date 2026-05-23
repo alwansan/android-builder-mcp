@@ -237,10 +237,27 @@ install_mcp() {
 
     cd "$INSTALL_DIR"
     print_info "  Installing npm dependencies..."
-    npm install --no-bin-links 2>/dev/null || npm install
+    npm install 2>&1 | tail -10
+
     print_info "  Building TypeScript..."
-    npm run build
-    print_success "MCP Server built at $INSTALL_DIR/dist/index.js"
+    if [ -f "node_modules/.bin/tsc" ]; then
+        ./node_modules/.bin/tsc 2>&1 | tail -5
+    elif command -v npx &>/dev/null; then
+        npx tsc 2>&1 | tail -5
+    else
+        npm run build 2>&1 | tail -5
+    fi
+
+    if [ -f "dist/index.js" ]; then
+        print_success "MCP Server built at $INSTALL_DIR/dist/index.js"
+    else
+        print_err "Build failed. Trying alternative method..."
+        cd "$INSTALL_DIR"
+        npx --yes tsc 2>&1 | tail -10 || {
+            print_err "TypeScript compilation failed."
+            print_info "Try manually: cd $INSTALL_DIR && npx tsc"
+        }
+    fi
 }
 
 # Main
