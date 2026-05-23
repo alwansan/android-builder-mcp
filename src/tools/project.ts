@@ -1,45 +1,261 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-function createBasicProject(dir: string, pkg: string, appName: string, minSdk: number) {
-  const p = pkg.replace(/\./g, "/");
-  const src = join(dir, "app", "src", "main");
-  const java = join(src, "java", p);
-  const layout = join(src, "res", "layout");
-  const values = join(src, "res", "values");
-  mkdirSync(java, { recursive: true });
-  mkdirSync(layout, { recursive: true });
-  mkdirSync(values, { recursive: true });
+const TEMPLATES_DIR = new URL("../../templates", import.meta.url).pathname;
 
-  writeFileSync(join(dir, "settings.gradle.kts"), `rootProject.name = "${appName.replace(/\s+/g, "-")}"\ninclude(":app")\n`);
-  writeFileSync(join(dir, "build.gradle.kts"), `plugins {\n    id("com.android.application") version "8.2.0" apply false\n    id("org.jetbrains.kotlin.android") version "1.9.20" apply false\n}\n`);
-  writeFileSync(join(src, "AndroidManifest.xml"), `<?xml version="1.0" encoding="utf-8"?>\n<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n    package="${pkg}">\n    <application android:label="${appName}" android:theme="@style/Theme.AppCompat.Light.DarkActionBar">\n        <activity android:name=".MainActivity" android:exported="true">\n            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>\n        </activity>\n    </application>\n</manifest>`);
-  writeFileSync(join(java, "MainActivity.java"), `package ${pkg};\n\nimport android.os.Bundle;\nimport androidx.appcompat.app.AppCompatActivity;\n\npublic class MainActivity extends AppCompatActivity {\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        setContentView(R.layout.activity_main);\n    }\n}`);
-  writeFileSync(join(layout, "activity_main.xml"), `<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n    android:layout_width="match_parent" android:layout_height="match_parent"\n    android:gravity="center" android:orientation="vertical">\n    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"\n        android:text="Hello Android!" android:textSize="24sp" />\n</LinearLayout>`);
-  writeFileSync(join(values, "strings.xml"), `<?xml version="1.0" encoding="utf-8"?>\n<resources><string name="app_name">${appName}</string></resources>`);
-  writeFileSync(join(values, "themes.xml"), `<?xml version="1.0" encoding="utf-8"?>\n<resources><style name="Theme.AppCompat.Light.DarkActionBar" parent="Theme.AppCompat.Light.DarkActionBar"/></resources>`);
-  writeFileSync(join(dir, "gradle.properties"), "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m\nandroid.useAndroidX=true\n");
-  writeFileSync(join(dir, "app", "build.gradle.kts"), `plugins { id("com.android.application") id("org.jetbrains.kotlin.android") version "1.9.20" }\nandroid {\n    namespace = "${pkg}"\n    compileSdk = 34\n    defaultConfig { applicationId = "${pkg}" minSdk = ${minSdk} targetSdk = 34 versionCode = 1 versionName = "1.0" }\n    buildTypes { release { isMinifyEnabled = false proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }\n    compileOptions { sourceCompatibility = JavaVersion.VERSION_17 targetCompatibility = JavaVersion.VERSION_17 }\n}\ndependencies { implementation("androidx.appcompat:appcompat:1.6.1") implementation("com.google.android.material:material:1.11.0") }\n`);
-  writeFileSync(join(dir, "app", "proguard-rules.pro"), "# ProGuard\n");
+function createBasicProject(dir: string, packageName: string, appName: string, minSdk: number) {
+  const packagePath = packageName.replace(/\./g, "/");
+  const srcDir = join(dir, "app", "src", "main");
+  const javaDir = join(srcDir, "java", packagePath);
+  const resDir = join(srcDir, "res");
+  const layoutDir = join(resDir, "layout");
+  const valuesDir = join(resDir, "values");
+  const mipmapDir = join(resDir, "mipmap-hdpi");
+
+  mkdirSync(javaDir, { recursive: true });
+  mkdirSync(layoutDir, { recursive: true });
+  mkdirSync(valuesDir, { recursive: true });
+  mkdirSync(mipmapDir, { recursive: true });
+
+  writeFileSync(join(dir, "settings.gradle.kts"), `rootProject.name = "${appName.replace(/\s+/g, "-")}"
+include(":app")
+`);
+
+  writeFileSync(join(dir, "build.gradle.kts"), `plugins {
+    id("com.android.application") version "8.2.0" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+}
+`);
+
+  const manifestContent = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="${packageName}"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="${appName}"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.${appName.replace(/\s+/g, "")}">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>`;
+
+  writeFileSync(join(srcDir, "AndroidManifest.xml"), manifestContent);
+
+  const activityContent = `package ${packageName};
+
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+
+public class MainActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+    }
+}`;
+
+  writeFileSync(join(javaDir, "MainActivity.java"), activityContent);
+
+  const layoutContent = `<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hello, Android!"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Click Me" />
+</LinearLayout>`;
+
+  writeFileSync(join(layoutDir, "activity_main.xml"), layoutContent);
+
+  writeFileSync(join(valuesDir, "strings.xml"), `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">${appName}</string>
+</resources>
+`);
+
+  writeFileSync(join(valuesDir, "colors.xml"), `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>
+`);
+
+  writeFileSync(join(valuesDir, "themes.xml"), `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.${appName.replace(/\s+/g, "")}" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">@color/purple_500</item>
+        <item name="colorPrimaryVariant">@color/purple_200</item>
+        <item name="colorAccent">@color/teal_200</item>
+    </style>
+</resources>
+`);
+
+  writeFileSync(join(dir, "gradle.properties"), `org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
+android.useAndroidX=true
+android.enableJetifier=true
+`);
+
+  writeFileSync(join(dir, "local.properties"), "sdk.dir=${ANDROID_HOME}\n");
+
+  // Create gradle wrapper
+  const gradlewPath = join(dir, "gradlew");
+  mkdirSync(join(dir, "gradle", "wrapper"), { recursive: true });
+  const wrapperScript = `#!/bin/bash
+# Gradle wrapper generated by Android Builder MCP
+export JAVA_HOME="\${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-arm64}"
+export ANDROID_HOME="\${ANDROID_HOME:-\$HOME/android-sdk}"
+DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+GRADLE_HOME=""
+for g in "\$HOME/gradle/gradle-8.10.2" "/usr/share/gradle" "/opt/gradle" "/data/data/com.termux/files/usr/share/gradle"; do
+  if [ -f "\$g/bin/gradle" ]; then GRADLE_HOME="\$g"; break; fi
+done
+if [ -z "\$GRADLE_HOME" ]; then
+  echo "Gradle not found. Run: apt install gradle"
+  exit 1
+fi
+exec "\$GRADLE_HOME/bin/gradle" "\$@"
+`;
+  writeFileSync(gradlewPath, wrapperScript, { mode: 0o755 });
+  writeFileSync(join(dir, "gradlew.bat"), "@echo off\r\ncall gradle %*\r\n");
+
+  const version = execSync("gradle --version 2>&1 || true", { encoding: "utf8" }).match(/Gradle (\d+\.\d+)/);
+  const gradleVer = version ? version[1] : "8.10.2";
+  writeFileSync(
+    join(dir, "gradle", "wrapper", "gradle-wrapper.properties"),
+    `distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-${gradleVer}-bin.zip\nzipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n`
+  );
+
+  const appBuildGradle = `plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android") version "1.9.20"
+}
+
+android {
+    namespace = "${packageName}"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "${packageName}"
+        minSdk = ${minSdk}
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+}
+`;
+
+  writeFileSync(join(dir, "app", "build.gradle.kts"), appBuildGradle);
+
+  writeFileSync(join(dir, "app", "proguard-rules.pro"), `# ProGuard rules for ${appName}
+-keepattributes *Annotation*
+-keepattributes SourceFile,LineNumberTable
+`);
 }
 
 export function registerProjectTools(server: McpServer) {
   server.tool(
     "create_android_project",
-    "Create a new Android project from a basic template.",
+    "Create a new Android project from a template with the specified package name, app name, and minimum SDK.",
     {
-      project_dir: z.string().describe("المسار الكامل لإنشاء المشروع فيه"),
-      package_name: z.string().describe("اسم الحزمة مثل com.example.myapp"),
-      app_name: z.string().describe("اسم التطبيق"),
-      min_sdk: z.number().min(21).max(35).default(26).describe("الحد الأدنى SDK"),
+      project_dir: z.string().describe("Full path to create the project at"),
+      package_name: z.string().describe("Package name (e.g., com.example.myapp)"),
+      app_name: z.string().describe("App name (e.g., MyApp)"),
+      min_sdk: z.number().min(21).max(35).default(26).describe("Minimum SDK version"),
+      template: z.enum(["basic", "compose", "empty"]).default("basic").describe("Project template"),
     },
-    async ({ project_dir, package_name, app_name, min_sdk }) => {
-      if (existsSync(project_dir)) return { content: [{ type: "text", text: "❌ المسار موجود بالفعل." }] };
-      mkdirSync(project_dir, { recursive: true });
-      createBasicProject(project_dir, package_name, app_name, min_sdk);
-      return { content: [{ type: "text", text: `## ✅ تم إنشاء المشروع\n**المسار:** ${project_dir}\n**الحزمة:** ${package_name}\n**Min SDK:** ${min_sdk}` }] };
+    async ({ project_dir, package_name, app_name, min_sdk, template }) => {
+      if (existsSync(project_dir)) {
+        return { content: [{ type: "text", text: `Error: path ${project_dir} already exists.` }] };
+      }
+      try {
+        mkdirSync(project_dir, { recursive: true });
+        if (template === "basic") {
+          createBasicProject(project_dir, package_name, app_name, min_sdk);
+        } else {
+          createBasicProject(project_dir, package_name, app_name, min_sdk);
+        }
+        const lines = [
+          `## Project Created`,
+          `**Path:** ${project_dir}`,
+          `**Package:** ${package_name}`,
+          `**Template:** ${template}`,
+          `**Min SDK:** ${min_sdk}`,
+          "",
+          "### Project Structure:",
+          "```",
+          `${project_dir}/`,
+          "|-- build.gradle.kts",
+          "|-- settings.gradle.kts",
+          "|-- gradle.properties",
+          "|-- app/",
+          "|   |-- build.gradle.kts",
+          "|   |-- proguard-rules.pro",
+          "|   +-- src/main/",
+          "|       |-- AndroidManifest.xml",
+          "|       |-- java/.../MainActivity.java",
+          "|       +-- res/",
+          "|           |-- layout/activity_main.xml",
+          "|           +-- values/strings.xml, colors.xml, themes.xml",
+          "```",
+          "",
+          "Tip: Use build_apk tool to build, or open in AndroidIDE",
+        ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error creating project: ${e.message}` }] };
+      }
     }
   );
 }
