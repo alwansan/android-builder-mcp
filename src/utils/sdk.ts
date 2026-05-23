@@ -15,7 +15,7 @@ export interface SdkEnvironment {
   inProot: boolean;
 }
 
-function detectJavaHome(): string {
+export function detectJavaHome(): string {
   if (process.env.JAVA_HOME) return process.env.JAVA_HOME;
   try {
     const javaBin = execSync("readlink -f $(which java) 2>/dev/null || which java", { encoding: "utf8" }).trim();
@@ -39,7 +39,7 @@ function detectJavaHome(): string {
 export function detectEnvironment(): SdkEnvironment {
   const arch = execSync("uname -m", { encoding: "utf8" }).trim();
   const isArm64 = arch === "aarch64" || arch === "arm64";
-  const inProot = existsSync("/.proot") || process.env.PROOT !== undefined;
+  const inProot = process.env.PROOT_L2S_DIR !== undefined || process.env.PROOT_TMP_DIR !== undefined || process.env.PROOT !== undefined;
   const javaHome = detectJavaHome();
   let javaVersion = "";
   try {
