@@ -9,15 +9,15 @@ export function registerBuildTools(server: McpServer) {
     "build_apk",
     "Build an Android APK from a Gradle project. Supports debug/release variants with optional clean build.",
     {
-      project_dir: z.string().describe("المسار الكامل لمشروع Android"),
-      variant: z.enum(["debug", "release"]).default("debug").describe("نوع البناء: debug أو release"),
-      clean: z.boolean().default(false).describe("مسح البناء السابق قبل البناء"),
-      extra_args: z.string().default("").describe("وسائط إضافية لـ Gradle"),
+      project_dir: z.string().describe("Full path to Android project"),
+      variant: z.enum(["debug", "release"]).default("debug").describe("debug or release build"),
+      clean: z.boolean().default(false).describe("Clean before building"),
+      extra_args: z.string().default("").describe("Extra Gradle arguments (space-separated)"),
     },
     async ({ project_dir, variant, clean, extra_args }) => {
       const env = detectEnvironment();
       let warnings: string[] = [];
-      if (!env.javaVersion) warnings.push("JDK غير مثبت. قد يفشل البناء.");
+      if (!env.javaVersion) warnings.push("JDK not installed. Build may fail.");
       if (env.isArm64) {
         const aaptFix = fixAapt2();
         if (aaptFix.success) warnings.push(aaptFix.message);
@@ -26,28 +26,27 @@ export function registerBuildTools(server: McpServer) {
       const args = extra_args ? extra_args.split(" ").filter(Boolean) : [];
       const result = buildApk(project_dir, variant, clean, args);
       const lines = [
-        `## ${result.success ? "✅ نجح البناء" : "❌ فشل البناء"}`,
+        `## ${result.success ? "Build Succeeded" : "Build Failed"}`,
         "",
-        `**المشروع:** ${project_dir}`,
-        `**النوع:** ${variant}`,
-        `**المدة:** ${(result.duration / 1000).toFixed(1)} ثانية`,
+        `**Project:** ${project_dir}`,
+        `**Variant:** ${variant}`,
+        `**Duration:** ${(result.duration / 1000).toFixed(1)}s`,
         "",
       ];
       if (result.success && result.apkPath) {
         try {
-          const { statSync } = await import("node:fs");
-          const size = statSync(result.apkPath).size;
+          const size = (await import("node:fs")).statSync(result.apkPath).size;
           lines.push(`**APK:** \`${result.apkPath}\``);
-          lines.push(`**الحجم:** ${(size / 1024 / 1024).toFixed(1)} MB`);
+          lines.push(`**Size:** ${(size / 1024 / 1024).toFixed(1)} MB`);
         } catch {
           lines.push(`**APK:** \`${result.apkPath}\``);
         }
       }
       if (result.errors.length > 0) {
-        lines.push("", "### ❌ الأخطاء:", ...result.errors.slice(0, 10).map((e) => `- \`${e}\``));
+        lines.push("", "### Errors:", ...result.errors.slice(0, 10).map((e) => `- \`${e}\``));
       }
       if (warnings.length > 0) {
-        lines.push("", "### ⚠️ تحذيرات:", ...warnings.map((w) => `- ${w}`));
+        lines.push("", "### Warnings:", ...warnings.map((w) => `- ${w}`));
       }
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
@@ -55,68 +54,109 @@ export function registerBuildTools(server: McpServer) {
 
   server.tool(
     "fix_aapt2",
-    "Fix the aapt2 issue on arm64 where Gradle downloads x86-64 aapt2 binaries.",
+    "Fix the aapt2 issue on arm64 where Gradle downloads x86-64 aapt2 binaries. Replaces them with the arm64 version.",
     {
-      check_only: z.boolean().default(false).describe("فحص فقط بدون إصلاح"),
+      check_only: z.boolean().default(false).describe("Check only, no fix"),
     },
     async ({ check_only }) => {
       const env = detectEnvironment();
       if (check_only) {
-        return { content: [{ type: "text", text: `## 🔍 فحص aapt2\n**aapt2 مسار:** ${env.aapt2Path || "غير موجود"}\n**المعمارية:** ${env.isArm64 ? "ARM64 ✅" : "ليست ARM64"}` }] };
+        const text = [
+          `## aapt2 Check`,
+          `**aapt2 path:** ${env.aapt2Path || "not found"}`,
+          `**Architecture:** ${env.isArm64 ? "ARM64" : "not ARM64"}`,
+        ].join("\n");
+        return { content: [{ type: "text", text }] };
       }
       const result = fixAapt2();
-      return { content: [{ type: "text", text: result.success ? `✅ ${result.message}` : `❌ ${result.message}` }] };
+      return { content: [{ type: "text", text: result.success ? result.message : `Failed: ${result.message}` }] };
     }
   );
 
   server.tool(
     "check_environment",
     "Check the Android build environment: JDK, SDK, Gradle, build tools, and architecture.",
-    { verbose: z.boolean().default(false).describe("عرض تفاصيل إضافية") },
+    { verbose: z.boolean().default(false).describe("Show additional details") },
     async ({ verbose }) => {
       const env = detectEnvironment();
-      const aaptCheck = (await import("../utils/sdk.js")).checkAapt2Fix();
+      const { checkAapt2Fix } = await import("../utils/sdk.js");
+      const aaptCheck = checkAapt2Fix();
       const lines = [
-        "## 🔧 بيئة البناء",
-        `**المعمارية:** ${env.isArm64 ? "ARM64 ✅" : "⚠️ غير ARM64"}`,
-        `**البيئة:** ${env.inProot ? "proot-distro" : "عادية"}`,
-        `**JDK:** ${env.javaVersion || "غير مثبت ❌"}`,
-        `**JAVA_HOME:** ${env.javaHome || "غير معرف ❌"}`,
+        "## Build Environment",
+        "",
+        `**Architecture:** ${env.isArm64 ? "ARM64" : "Not ARM64"}`,
+        `**Environment:** ${env.inProot ? "proot-distro" : "standard"}`,
+        `**JDK:** ${env.javaVersion || "Not installed"}`,
+        `**JAVA_HOME:** ${env.javaHome || "Not set"}`,
         `**ANDROID_HOME:** ${env.androidHome}`,
-        `**Build Tools:** ${env.buildToolsVersion || "غير مثبت ❌"}`,
-        `**aapt2:** ${env.aapt2Path ? "موجود ✅" : "غير موجود ❌"}`,
-        `**Gradle:** ${env.gradleVersion || "غير مثبت ❌"}`,
-        `**aapt2 في Gradle cache:** ${aaptCheck.needsFix ? `${aaptCheck.jars.length} JAR بحاجة للإصلاح` : "سليم ✅"}`,
+        `**Build Tools:** ${env.buildToolsVersion || "Not installed"}`,
+        `**aapt2:** ${env.aapt2Path ? "Found" : "Not found"}`,
+        `**Gradle:** ${env.gradleVersion || "Not installed"}`,
+        "",
+        `**aapt2 in Gradle cache:** ${aaptCheck.needsFix ? `${aaptCheck.jars.length} JAR(s) need fix` : "OK"}`,
       ];
+      if (verbose && env.buildToolsVersion) {
+        const fs = await import("node:fs");
+        const btDir = `${env.androidHome}/build-tools/${env.buildToolsVersion}`;
+        try {
+          const files = fs.readdirSync(btDir);
+          lines.push("", "**build-tools files:**", files.map((f: string) => `- ${f}`).join("\n"));
+        } catch {}
+      }
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
   );
 
   server.tool(
     "install_sdk",
-    "Install Android SDK and build tools for arm64 using AndroidIDE tools.",
+    "Install or update Android SDK and build tools for arm64 using AndroidIDE tools.",
     {
-      sdk_version: z.string().default("34.0.4"),
-      install_dir: z.string().default("~/android-sdk"),
+      sdk_version: z.string().default("34.0.4").describe("Build tools version (e.g., 34.0.4)"),
+      install_dir: z.string().default("~/android-sdk").describe("Installation path"),
     },
     async ({ sdk_version, install_dir }) => {
       const arch = (await import("child_process")).execSync("uname -m", { encoding: "utf8" }).trim();
-      const isArm = arch === "aarch64" || arch === "arm64";
-      if (!isArm) return { content: [{ type: "text", text: "❌ هذا الأمر مخصص للـ ARM64 فقط." }] };
+      const isArm = arch === "aarch64" || arch === "arm64" || arch === "armv7l";
+      if (!isArm) {
+        return { content: [{ type: "text", text: "This command is for ARM64 only." }] };
+      }
       const sdkArch = arch === "aarch64" ? "aarch64" : "arm";
       const installPath = install_dir.replace(/^~/, process.env.HOME || "");
-      const { execSync } = await import("child_process");
       const cmds = [
         `mkdir -p "${installPath}"`,
-        `curl -L -o /tmp/bt.tar.xz "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/v${sdk_version}/build-tools-${sdk_version}-${sdkArch}.tar.xz"`,
+        `curl -fsSL -o /tmp/build-tools.tar.xz "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/v${sdk_version}/build-tools-${sdk_version}-${sdkArch}.tar.xz"`,
         `mkdir -p "${installPath}/build-tools/${sdk_version}"`,
-        `tar xf /tmp/bt.tar.xz -C "${installPath}/build-tools/${sdk_version}"`,
-        `curl -L -o /tmp/pt.tar.xz "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/v${sdk_version}/platform-tools-${sdk_version}-${sdkArch}.tar.xz"`,
-        `tar xf /tmp/pt.tar.xz -C "${installPath}"`,
-        `rm -f /tmp/bt.tar.xz /tmp/pt.tar.xz`,
+        `tar xf /tmp/build-tools.tar.xz -C "${installPath}/build-tools/${sdk_version}" 2>/dev/null`,
+        `[ -d "${installPath}/build-tools/${sdk_version}/build-tools" ] && mv "${installPath}/build-tools/${sdk_version}/build-tools/${sdk_version}/"* "${installPath}/build-tools/${sdk_version}/" && rm -rf "${installPath}/build-tools/${sdk_version}/build-tools" || true`,
+        `curl -fsSL -o /tmp/platform-tools.tar.xz "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/v${sdk_version}/platform-tools-${sdk_version}-${sdkArch}.tar.xz"`,
+        `tar xf /tmp/platform-tools.tar.xz -C "${installPath}" 2>/dev/null`,
+        `rm -f /tmp/build-tools.tar.xz /tmp/platform-tools.tar.xz`,
+        `echo "export ANDROID_HOME=${installPath}" >> ~/.bashrc`,
+        `echo 'export PATH=\\$ANDROID_HOME/build-tools/${sdk_version}:\\$ANDROID_HOME/platform-tools:\\$PATH' >> ~/.bashrc`,
       ];
-      const results = cmds.map(c => { try { execSync(c, { timeout: 120000 }); return `✅ ${c.substring(0, 50)}...`; } catch { return `❌ ${c.substring(0, 50)}...`; } }).join("\n");
-      return { content: [{ type: "text", text: `## 📦 تثبيت SDK\n**الموقع:** ${installPath}\n**الإصدار:** ${sdk_version}\n\n${results}` }] };
+      const results: string[] = [];
+      for (const cmd of cmds) {
+        try {
+          (await import("child_process")).execSync(cmd, { encoding: "utf8", timeout: 120000 });
+          results.push(`OK: ${cmd.split("\n")[0].substring(0, 60)}...`);
+        } catch (e: any) {
+          results.push(`FAIL: ${cmd.substring(0, 60)}...`);
+        }
+      }
+      return {
+        content: [{
+          type: "text",
+          text: [
+            "## SDK Installation",
+            `**Path:** ${installPath}`,
+            `**Version:** ${sdk_version}`,
+            "",
+            ...results,
+            "",
+            "Restart shell or run: `source ~/.bashrc`",
+          ].join("\n"),
+        }],
+      };
     }
   );
 }
