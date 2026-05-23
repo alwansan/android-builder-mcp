@@ -33,12 +33,19 @@ else
     exit 1
 fi
 
-# Detect environment
+# Detect environment (proot-distro Ubuntu on Termux)
 IS_TERMUX=false
 IS_PROOT=false
-if [ -d "/data/data/com.termux" ] || [ -n "${TERMUX_VERSION:-}" ]; then IS_TERMUX=true; fi
-if [ -f "/.proot" ] || [ -n "${PROOT:-}" ] || [ "$IS_TERMUX" = false ]; then IS_PROOT=true; fi
-print_info "Environment: $([ "$IS_TERMUX" = true ] && echo "Termux" || echo "Linux") + $([ "$IS_PROOT" = true ] && echo "proot/standard" || echo "native")"
+if [ -n "${PROOT_L2S_DIR:-}" ] || [ -n "${PROOT_TMP_DIR:-}" ] || grep -q "TracerPid:.*[0-9]" /proc/self/status 2>/dev/null; then
+    IS_PROOT=true
+fi
+if [ -d "/data/data/com.termux" ] && [ "$IS_PROOT" = false ]; then
+    IS_TERMUX=true
+fi
+if [ -n "${TERMUX_VERSION:-}" ]; then
+    IS_TERMUX=true
+fi
+print_info "Environment: $([ "$IS_TERMUX" = true ] && echo "Termux" || echo "Linux") + $([ "$IS_PROOT" = true ] && echo "proot-distro" || echo "native")"
 
 # Detect package manager
 if command -v apt >/dev/null 2>&1; then PKG="apt"
@@ -237,27 +244,18 @@ install_mcp() {
 
     cd "$INSTALL_DIR"
     print_info "  Installing npm dependencies..."
-    npm install 2>&1 | tail -10
+    npm install --ignore-scripts 2>&1 || { print_err "npm install failed."; exit 1; }
 
     print_info "  Building TypeScript..."
     if [ -f "node_modules/.bin/tsc" ]; then
-        ./node_modules/.bin/tsc 2>&1 | tail -5
+        ./node_modules/.bin/tsc 2>&1 || { print_err "TypeScript compilation failed."; exit 1; }
     elif command -v npx &>/dev/null; then
-        npx tsc 2>&1 | tail -5
+        npx tsc 2>&1 || { print_err "TypeScript compilation failed."; exit 1; }
     else
-        npm run build 2>&1 | tail -5
+        npm run build 2>&1 || { print_err "TypeScript compilation failed."; exit 1; }
     fi
 
-    if [ -f "dist/index.js" ]; then
-        print_success "MCP Server built at $INSTALL_DIR/dist/index.js"
-    else
-        print_err "Build failed. Trying alternative method..."
-        cd "$INSTALL_DIR"
-        npx --yes tsc 2>&1 | tail -10 || {
-            print_err "TypeScript compilation failed."
-            print_info "Try manually: cd $INSTALL_DIR && npx tsc"
-        }
-    fi
+    print_success "MCP Server built at $INSTALL_DIR/dist/index.js"
 }
 
 # Main
