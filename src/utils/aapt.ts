@@ -1,3 +1,10 @@
+import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { detectEnvironment } from "./sdk.js";
+import { findBox64, findX64Aapt2, findArm64Aapt2, patchAapt2InGradleCache } from "./gradle.js";
+
 export function fixAapt2(): { success: boolean; message: string } {
   const env = detectEnvironment();
   const hasBox64 = findBox64() !== null;
