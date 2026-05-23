@@ -62,7 +62,7 @@ ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 install_system_deps() {
     print_info "Checking system dependencies..."
     MISSING=""
-    for cmd in curl unzip tar which; do
+    for cmd in curl unzip tar which git; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             MISSING="$MISSING $cmd"
         fi
@@ -77,7 +77,7 @@ install_system_deps() {
         # shellcheck disable=SC2086
         $PKG install -y $MISSING 2>/dev/null || {
             # Fallback: install essential packages
-            $PKG install -y curl unzip tar binutils coreutils 2>/dev/null || true
+            $PKG install -y curl unzip tar binutils coreutils git 2>/dev/null || true
         }
     fi
     print_success "System dependencies ready"
@@ -411,11 +411,11 @@ verify_installation() {
 
     command -v node >/dev/null 2>&1 && print_success "  Node.js: $(node --version)" || { print_err "  Node.js: MISSING"; FAIL=1; }
     command -v java >/dev/null 2>&1 && print_success "  JDK: $(java -version 2>&1 | head -1)" || { print_err "  JDK: MISSING"; FAIL=1; }
-    command -v gradle >/dev/null 2>&1 && print_success "  Gradle: $(gradle --version 2>&1 | grep Gradle | head -1)" || print_warn "  Gradle: not in PATH (may be manually installed)")
+    command -v gradle >/dev/null 2>&1 && print_success "  Gradle: $(gradle --version 2>&1 | grep Gradle | head -1)" || print_warn "  Gradle: not in PATH (may be manually installed)"
     [ -f "$ANDROID_HOME/platforms/android-36/android.jar" ] && print_success "  Platform android-36: OK" || print_warn "  Platform android-36: MISSING"
 
     if $IS_ARM64; then
-        command -v box64 >/dev/null 2>&1 && print_success "  Box64: $(box64 --version 2>&1 | head -1)" || print_warn "  Box64: MISSING (needed for compileSdk>=35)")
+        command -v box64 >/dev/null 2>&1 && print_success "  Box64: $(box64 --version 2>&1 | head -1)" || print_warn "  Box64: MISSING (needed for compileSdk>=35)"
     fi
 
     echo ""
