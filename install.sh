@@ -298,12 +298,27 @@ install_android_sdk() {
         fi
     fi
 
+    # Install NDK for native .so compilation (Chaquopy, externalNativeBuild)
+    if ! [ -d "$ANDROID_HOME/ndk" ]; then
+        print_info "Installing NDK 27.3.13750724..."
+        install_sdkmanager
+        if command -v sdkmanager >/dev/null 2>&1; then
+            yes | sdkmanager --sdk_root="$ANDROID_HOME" "ndk;27.3.13750724" 2>/dev/null || true
+        fi
+        if [ -d "$ANDROID_HOME/ndk/27.3.13750724" ]; then
+            print_success "  NDK 27.3.13750724 installed"
+        else
+            print_warn "  NDK installation failed. Native .so compilation (Chaquopy) may not work."
+        fi
+    fi
+
     # Summary
     echo ""
     print_info "SDK Installation Summary:"
     [ -f "$ANDROID_HOME/build-tools/34.0.4/aapt2" ] && print_success "  arm64 build-tools 34.0.4: OK"
     [ -f "$ANDROID_HOME/build-tools/35.0.0/aapt2" ] && print_success "  x86-64 build-tools 35.0.0 (Box64): OK"
     [ -f "$ANDROID_HOME/platforms/android-36/android.jar" ] && print_success "  platform android-36: OK"
+    [ -d "$ANDROID_HOME/ndk" ] && print_success "  NDK: OK" || print_warn "  NDK: MISSING"
     [ -f "$ANDROID_HOME/platform-tools/adb" ] && print_success "  platform-tools (adb): OK"
 }
 
@@ -413,6 +428,8 @@ verify_installation() {
     command -v java >/dev/null 2>&1 && print_success "  JDK: $(java -version 2>&1 | head -1)" || { print_err "  JDK: MISSING"; FAIL=1; }
     command -v gradle >/dev/null 2>&1 && print_success "  Gradle: $(gradle --version 2>&1 | grep Gradle | head -1)" || print_warn "  Gradle: not in PATH (may be manually installed)"
     [ -f "$ANDROID_HOME/platforms/android-36/android.jar" ] && print_success "  Platform android-36: OK" || print_warn "  Platform android-36: MISSING"
+
+    [ -d "$ANDROID_HOME/ndk" ] && print_success "  NDK: OK" || print_warn "  NDK: MISSING (needed for Chaquopy native compilation)"
 
     if $IS_ARM64; then
         command -v box64 >/dev/null 2>&1 && print_success "  Box64: $(box64 --version 2>&1 | head -1)" || print_warn "  Box64: MISSING (needed for compileSdk>=35)"

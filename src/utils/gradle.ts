@@ -46,6 +46,18 @@ export function ensureSdkComponents(): void {
     }
   }
 
+  // Install NDK if not present (needed for native .so compilation via Chaquopy/externalNativeBuild)
+  if (!existsSync(join(androidHome, "ndk"))) {
+    try {
+      const ndkList = execSync("ls /root/android-sdk/ndk/ 2>/dev/null || true", { encoding: "utf8" }).trim();
+      if (!ndkList) {
+        needed.push("ndk;27.3.13750724");
+      }
+    } catch {
+      needed.push("ndk;27.3.13750724");
+    }
+  }
+
   if (needed.length === 0) return;
 
   const sdkmanagerCandidates = [
@@ -141,7 +153,7 @@ export function buildApk(
   let cmd = `JAVA_HOME="${javaHome}" ANDROID_HOME="${androidHome}" ${gradleCmd} ${task}`;
   if (clean) cmd = `JAVA_HOME="${javaHome}" ANDROID_HOME="${androidHome}" ${gradleCmd} clean ${task}`;
   if (extraArgs.length > 0) cmd += ` ${extraArgs.join(" ")}`;
-  cmd += " --no-daemon 2>&1";
+  cmd += " 2>&1";
 
   const done = (result: BuildResult): BuildResult => {
     if (needsCleanup) {
