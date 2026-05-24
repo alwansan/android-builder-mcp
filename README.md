@@ -159,8 +159,9 @@ cd android-builder-mcp
 # 2. Install deps & build
 npm install
 npm run build
-
+```
 # 3. Add to OpenCode config (~/.config/opencode/opencode.jsonc)
+```bash
 {
   "mcp": {
     "android-builder": {
@@ -171,12 +172,13 @@ npm run build
     }
   }
 }
+```
 # Or use the OpenCode CLI:
 # opencode mcp add android-builder -- node /path/to/android-builder-mcp/dist/index.js
 
 # 4. Restart OpenCode and verify
 # Ask: check_environment
-```
+
 
 ---
 
