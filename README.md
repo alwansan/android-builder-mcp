@@ -180,18 +180,6 @@ npm run build
 
 ---
 
-## 🚦 Build Performance (arm64 + Box64)
-
-| Project | AGP | Build Time | APK Size | Notes |
-|---------|-----|-----------|----------|-------|
-| Empty template | 8.5.2 | 85s | 5.3 MB | First build (downloads deps) |
-| TasbihCounter | 8.13.0 | 84s | 6.4 MB | compileSdk=36 |
-| B-Ultra (Chaquopy + Flask + yt-dlp) | 9.1.1 | 158s | 59 MB | Python 3.13 embedded |
-
-Box64 adds ~2-3x overhead vs native x86-64. IO-bound operations see less impact.
-
----
-
 ## 🔍 Troubleshooting
 
 | Symptom | Cause | Fix |
