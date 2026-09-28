@@ -1,0 +1,62 @@
+name: Cinemana Kotlin Runtime Bundle
+
+on:
+  push:
+    branches: [cinemana-deps-cp456]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-kotlin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
+      - name: Resolve Kotlin runtime jars
+        shell: bash
+        run: |
+          rm -rf /tmp/kotlin-runtime
+          mkdir -p /tmp/kotlin-runtime
+          cat > /tmp/kotlin-runtime/settings.gradle <<'EOF'
+          rootProject.name = 'kotlin-runtime'
+          EOF
+          cat > /tmp/kotlin-runtime/build.gradle <<'EOF'
+          plugins { id 'base' }
+          repositories { mavenCentral(); google() }
+          configurations {
+              bundle {
+                  canBeConsumed = false
+                  canBeResolved = true
+                  transitive = true
+              }
+          }
+          dependencies {
+              bundle 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0'
+              bundle 'org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.0'
+          }
+          tasks.register('copyBundle', Copy) {
+              from configurations.bundle
+              into layout.buildDirectory.dir('bundle')
+          }
+          EOF
+          cd /tmp/kotlin-runtime
+          gradle --no-daemon copyBundle
+          cd build
+          zip -9 -r "$GITHUB_WORKSPACE/cinemana-kotlin-runtime-1.9.0.zip" bundle
+          sha256sum "$GITHUB_WORKSPACE/cinemana-kotlin-runtime-1.9.0.zip" > "$GITHUB_WORKSPACE/cinemana-kotlin-runtime-1.9.0.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cinemana-kotlin-runtime-1.9.0
+          path: |
+            cinemana-kotlin-runtime-1.9.0.zip
+            cinemana-kotlin-runtime-1.9.0.zip.sha256
+          retention-days: 7
