@@ -11,7 +11,7 @@ permissions:
 jobs:
   resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -31,6 +31,10 @@ jobs:
           rootProject.name = 'cinemana-deps'
           EOF
           cat > /tmp/cinemana-deps/build.gradle <<'EOF'
+          import org.gradle.api.attributes.Usage
+          import org.gradle.api.attributes.Category
+          import org.gradle.api.attributes.LibraryElements
+
           plugins { id 'base' }
 
           repositories {
@@ -46,16 +50,34 @@ jobs:
                   canBeResolved = true
                   transitive = true
               }
+              processorBundle {
+                  canBeConsumed = false
+                  canBeResolved = true
+                  transitive = true
+                  attributes {
+                      attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+                      attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category, Category.LIBRARY))
+                      attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+                  }
+              }
               pluginBundle {
                   canBeConsumed = false
                   canBeResolved = true
                   transitive = true
+                  attributes {
+                      attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+                      attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category, Category.LIBRARY))
+                      attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+                  }
               }
           }
 
           dependencies {
               pluginBundle 'com.android.tools.build:gradle:8.1.1'
               pluginBundle 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
+
+              processorBundle 'androidx.room:room-compiler:2.6.1'
+              processorBundle 'com.github.bumptech.glide:compiler:4.16.0'
 
               runtimeBundle 'javax.inject:javax.inject:1'
               runtimeBundle 'org.jetbrains.kotlin:kotlin-stdlib:1.9.0'
@@ -85,7 +107,6 @@ jobs:
               runtimeBundle 'androidx.room:room-runtime:2.6.1'
               runtimeBundle 'androidx.room:room-ktx:2.6.1'
               runtimeBundle 'androidx.room:room-rxjava2:2.6.1'
-              runtimeBundle 'androidx.room:room-compiler:2.6.1'
 
               runtimeBundle 'androidx.lifecycle:lifecycle-livedata-ktx:2.3.1'
               runtimeBundle 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.3.1'
@@ -106,7 +127,6 @@ jobs:
               runtimeBundle 'org.greenrobot:eventbus:3.2.0'
 
               runtimeBundle 'com.github.bumptech.glide:glide:4.16.0'
-              runtimeBundle 'com.github.bumptech.glide:compiler:4.16.0'
               runtimeBundle 'com.facebook.fresco:fresco:2.6.0'
               runtimeBundle 'com.facebook.android:facebook-login:8.1.0'
               runtimeBundle 'com.squareup.picasso:picasso:2.71828'
@@ -129,16 +149,24 @@ jobs:
               doLast {
                   def out = file("$buildDir/cinemana-deps")
                   def runtime = new File(out, 'runtime')
+                  def processors = new File(out, 'processors')
                   def plugins = new File(out, 'plugins')
-                  runtime.mkdirs(); plugins.mkdirs()
+                  runtime.mkdirs(); processors.mkdirs(); plugins.mkdirs()
+
                   configurations.runtimeBundle.resolvedConfiguration.resolvedArtifacts.each { a ->
                       copy { from a.file; into runtime }
+                  }
+                  configurations.processorBundle.resolvedConfiguration.resolvedArtifacts.each { a ->
+                      copy { from a.file; into processors }
                   }
                   configurations.pluginBundle.resolvedConfiguration.resolvedArtifacts.each { a ->
                       copy { from a.file; into plugins }
                   }
+
                   file("$out/runtime-files.txt").text =
                       configurations.runtimeBundle.files.collect { it.name }.sort().join('\n') + '\n'
+                  file("$out/processor-files.txt").text =
+                      configurations.processorBundle.files.collect { it.name }.sort().join('\n') + '\n'
                   file("$out/plugin-files.txt").text =
                       configurations.pluginBundle.files.collect { it.name }.sort().join('\n') + '\n'
               }
@@ -149,11 +177,16 @@ jobs:
         working-directory: /tmp/cinemana-deps
         run: gradle --no-daemon --stacktrace bundleDependencies
 
-      - name: Pack dependency bundle
+      - name: Pack raw dependency bundle
         run: |
           cd /tmp/cinemana-deps/build
           zip -9 -r "$GITHUB_WORKSPACE/cinemana-cp456-dependencies.zip" cinemana-deps
           sha256sum "$GITHUB_WORKSPACE/cinemana-cp456-dependencies.zip" > "$GITHUB_WORKSPACE/cinemana-cp456-dependencies.zip.sha256"
+
+      - name: Pack Gradle modules cache
+        run: |
+          tar -C "$HOME/.gradle/caches" -czf "$GITHUB_WORKSPACE/cinemana-gradle-modules2.tar.gz" modules-2
+          sha256sum "$GITHUB_WORKSPACE/cinemana-gradle-modules2.tar.gz" > "$GITHUB_WORKSPACE/cinemana-gradle-modules2.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -161,4 +194,6 @@ jobs:
           path: |
             cinemana-cp456-dependencies.zip
             cinemana-cp456-dependencies.zip.sha256
+            cinemana-gradle-modules2.tar.gz
+            cinemana-gradle-modules2.tar.gz.sha256
           retention-days: 7
